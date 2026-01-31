@@ -2,8 +2,9 @@ name: DevOps Hackathon Deployment
 on:
   push:
     branches: [main]
+
 permissions:
-  id-token: write
+  id-token: write # Required for Workload Identity
   contents: read
 
 jobs:
@@ -12,24 +13,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 1. Authenticate to GCP
       - id: 'auth'
         uses: 'google-github-actions/auth@v2'
         with:
-          workload_identity_provider: 'projects/${{ secrets.PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
-          service_account: 'github-actions-sa@${{ secrets.PROJECT_ID }}.iam.gserviceaccount.com'
+          workload_identity_provider: 'projects//271602769899/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'github-actions-sa@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com'
 
-      - name: 'Build & Push Java Service'
+      # 2. Build and Push (Fixed Indentation & Registry Path)
+      - name: Build and Push Order Service
         run: |
-          gcloud auth configure-docker
-          docker build -t gcr.io/${{ secrets.PROJECT_ID }}/order-service:${{ github.sha }} ./order-service
-          docker push gcr.io/${{ secrets.PROJECT_ID }}/order-service:${{ github.sha }}
+          # Use Artifact Registry (modern) instead of GCR (legacy)
+          IMAGE_NAME=us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/hackathon-repo/order-service:${{ github.sha }}
+          
+          # Authenticate Docker once before pushing
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          
+          docker build -t $IMAGE_NAME ./order-service
+          docker push $IMAGE_NAME
 
-      - name: 'Deploy to GKE'
+      # 3. Get GKE Credentials (Allows kubectl to talk to your cluster)
+      - name: 'Get GKE Credentials'
         uses: 'google-github-actions/get-gke-credentials@v2'
         with:
           cluster_name: 'hackathon-cluster'
           location: 'us-central1-a'
 
+      # 4. Update Deployment (Point to the new image)
       - name: 'Update K8s'
         run: |
-          kubectl set image deployment/order-service order-service=gcr.io/${{ secrets.PROJECT_ID }}/order-service:${{ github.sha }} -n dev
+          # Use the EXACT same image string used in the push step
+          kubectl set image deployment/order-service \
+            order-service=us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/hackathon-repo/order-service:${{ github.sha }} \
+            -n dev
+          
+          # Force a rollout restart to ensure the new image is pulled
+          kubectl rollout restart deployment/order-service -n dev

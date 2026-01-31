@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: order-service
-          image: gcr.io/PROJECT_ID/order-service:latest
+          image: gcr.io//order-service:latest
           resources:
             requests:
               memory: "512Mi"
