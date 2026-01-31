@@ -1,0 +1,35 @@
+name: DevOps Hackathon Deployment
+on:
+  push:
+    branches: [main]
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: 'auth'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: 'projects/${{ secrets.PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: 'github-actions-sa@${{ secrets.PROJECT_ID }}.iam.gserviceaccount.com'
+
+      - name: 'Build & Push Java Service'
+        run: |
+          gcloud auth configure-docker
+          docker build -t gcr.io/${{ secrets.PROJECT_ID }}/order-service:${{ github.sha }} ./order-service
+          docker push gcr.io/${{ secrets.PROJECT_ID }}/order-service:${{ github.sha }}
+
+      - name: 'Deploy to GKE'
+        uses: 'google-github-actions/get-gke-credentials@v2'
+        with:
+          cluster_name: 'hackathon-cluster'
+          location: 'us-central1-a'
+
+      - name: 'Update K8s'
+        run: |
+          kubectl set image deployment/order-service order-service=gcr.io/${{ secrets.PROJECT_ID }}/order-service:${{ github.sha }} -n dev
